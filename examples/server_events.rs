@@ -3,8 +3,9 @@ use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use valkey_module::alloc::ValkeyAlloc;
 use valkey_module::server_events::{
     ClientChangeSubevent,
-    KeyChangeSubevent,
+    ForkChildSubevent, KeyChangeSubevent,
     MasterLinkChangeSubevent,
+   
     PersistenceSubevent,
     LoadingSubevent,
     LoadingProgress,
@@ -17,9 +18,9 @@ use valkey_module_macros::{
     config_changed_event_handler,
     cron_event_handler,
     flush_event_handler,
-    key_event_handler,
-    master_link_change_event_handler,
-    persistence_event_handler,
+    fork_child_event_handler, key_event_handler,
+   
+    master_link_change_event_handler, persistence_event_handler,
     shutdown_event_handler,
     loading_event_handler,
     loading_progress_event_handler,
@@ -35,6 +36,7 @@ static NUM_MASTER_LINK_CHANGE_EVENTS: AtomicI64 = AtomicI64::new(0);
 static IS_MASTER_LINK_UP: AtomicBool = AtomicBool::new(false);
 static NUM_LOADING_PROGRESS_RDB: AtomicI64 = AtomicI64::new(0);
 static NUM_LOADING_PROGRESS_AOF: AtomicI64 = AtomicI64::new(0);
+static NUM_FORK_CHILD_EVENTS: AtomicI64 = AtomicI64::new(0);
 
 #[flush_event_handler]
 fn flushed_event_handler(_ctx: &Context, flush_event: FlushSubevent) {
@@ -173,6 +175,20 @@ fn master_link_change_event_handler(
     }
 }
 
+#[fork_child_event_handler]
+fn fork_child_event_handler(ctx: &Context, fork_child_subevent: ForkChildSubevent) {
+    match fork_child_subevent {
+        ForkChildSubevent::Born => {
+            ctx.log_warning("Fork child born");
+            NUM_FORK_CHILD_EVENTS.fetch_add(1, Ordering::SeqCst);
+        }
+        ForkChildSubevent::Died => {
+            ctx.log_warning("Fork child died");
+            NUM_FORK_CHILD_EVENTS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
 fn num_flushed(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResult {
     Ok(ValkeyValue::Integer(NUM_FLUSHES.load(Ordering::SeqCst)))
 }
@@ -219,6 +235,12 @@ fn num_loading_progress_aof(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyR
     Ok(ValkeyValue::Integer(NUM_LOADING_PROGRESS_AOF.load(Ordering::SeqCst)))
 }
 
+fn num_fork_child_events(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResult {
+    Ok(ValkeyValue::Integer(
+        NUM_FORK_CHILD_EVENTS.load(Ordering::SeqCst),
+    ))
+}
+
 //////////////////////////////////////////////////////
 
 valkey_module! {
@@ -237,5 +259,6 @@ valkey_module! {
         ["is_master_link_up", is_master_link_up, "readonly", 0, 0, 0],
         ["num_loading_progress_rdb", num_loading_progress_rdb, "readonly", 0, 0, 0],
         ["num_loading_progress_aof", num_loading_progress_aof, "readonly", 0, 0, 0],
+        ["num_fork_child_events", num_fork_child_events, "readonly", 0, 0, 0],
     ]
 }
