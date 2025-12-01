@@ -6,12 +6,13 @@ use valkey_module::server_events::{
     ForkChildSubevent, KeyChangeSubevent,
     MasterLinkChangeSubevent,
    
-    PersistenceSubevent,
+    PersistenceSubevent, ReplAsyncLoadSubevent, ReplicaChangeSubevent,
     LoadingSubevent,
     LoadingProgress,
 };
 use valkey_module::{
-    server_events::FlushSubevent, valkey_module, Context, ValkeyResult, ValkeyString, ValkeyValue,
+    server_events::FlushSubevent, valkey_module, Context, ModuleOptions, Status, ValkeyResult,
+    ValkeyString, ValkeyValue,
 };
 use valkey_module_macros::{
     client_changed_event_handler,
@@ -21,7 +22,8 @@ use valkey_module_macros::{
     fork_child_event_handler, key_event_handler,
    
     master_link_change_event_handler, persistence_event_handler,
-    shutdown_event_handler,
+    repl_async_load_event_handler,
+    replica_change_event_handler, shutdown_event_handler, swapdb_event_handler,
     loading_event_handler,
     loading_progress_event_handler,
 };
@@ -37,6 +39,9 @@ static IS_MASTER_LINK_UP: AtomicBool = AtomicBool::new(false);
 static NUM_LOADING_PROGRESS_RDB: AtomicI64 = AtomicI64::new(0);
 static NUM_LOADING_PROGRESS_AOF: AtomicI64 = AtomicI64::new(0);
 static NUM_FORK_CHILD_EVENTS: AtomicI64 = AtomicI64::new(0);
+static NUM_REPLICA_CHANGE_EVENTS: AtomicI64 = AtomicI64::new(0);
+static NUM_REPL_ASYNC_LOAD_EVENTS: AtomicI64 = AtomicI64::new(0);
+static NUM_SWAP_DB_EVENTS: AtomicI64 = AtomicI64::new(0);
 
 #[flush_event_handler]
 fn flushed_event_handler(_ctx: &Context, flush_event: FlushSubevent) {
@@ -180,13 +185,47 @@ fn fork_child_event_handler(ctx: &Context, fork_child_subevent: ForkChildSubeven
     match fork_child_subevent {
         ForkChildSubevent::Born => {
             ctx.log_warning("Fork child born");
-            NUM_FORK_CHILD_EVENTS.fetch_add(1, Ordering::SeqCst);
         }
         ForkChildSubevent::Died => {
             ctx.log_warning("Fork child died");
-            NUM_FORK_CHILD_EVENTS.fetch_add(1, Ordering::SeqCst);
         }
     }
+    NUM_FORK_CHILD_EVENTS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[replica_change_event_handler]
+fn replica_change_event_handler(ctx: &Context, replica_change_subevent: ReplicaChangeSubevent) {
+    match replica_change_subevent {
+        ReplicaChangeSubevent::Online => {
+            ctx.log_notice("Replica online");
+        }
+        ReplicaChangeSubevent::Offline => {
+            ctx.log_notice("Replica offline");
+        }
+    }
+    NUM_REPLICA_CHANGE_EVENTS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[repl_async_load_event_handler]
+fn repl_async_load_event_handler(ctx: &Context, repl_async_load_subevent: ReplAsyncLoadSubevent) {
+    match repl_async_load_subevent {
+        ReplAsyncLoadSubevent::Started => {
+            ctx.log_notice("Repl async load started");
+        }
+        ReplAsyncLoadSubevent::Aborted => {
+            ctx.log_notice("Repl async load aborted");
+        }
+        ReplAsyncLoadSubevent::Completed => {
+            ctx.log_notice("Repl async load completed");
+        }
+    }
+    NUM_REPL_ASYNC_LOAD_EVENTS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[swapdb_event_handler]
+fn swapdb_event_handler(ctx: &Context, _: u64) {
+    NUM_SWAP_DB_EVENTS.fetch_add(1, Ordering::SeqCst);
+    ctx.log_notice("Databases swapped");
 }
 
 fn num_flushed(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResult {
@@ -241,6 +280,32 @@ fn num_fork_child_events(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResu
     ))
 }
 
+fn num_replica_change_events(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResult {
+    Ok(ValkeyValue::Integer(
+        NUM_REPLICA_CHANGE_EVENTS.load(Ordering::SeqCst),
+    ))
+}
+
+fn num_repl_async_load_events(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResult {
+    Ok(ValkeyValue::Integer(
+        NUM_REPL_ASYNC_LOAD_EVENTS.load(Ordering::SeqCst),
+    ))
+}
+
+fn num_swapdb_events(_ctx: &Context, _args: Vec<ValkeyString>) -> ValkeyResult {
+    Ok(ValkeyValue::Integer(
+        NUM_SWAP_DB_EVENTS.load(Ordering::SeqCst),
+    ))
+}
+
+fn init(ctx: &Context, _args: &[ValkeyString]) -> Status {
+    // https://valkey.io/topics/modules-api-ref/#ValkeyModule_SetModuleOptions
+    // otherwise you get:  Skipping diskless-load because there are modules that are not aware of async replication.
+    // needed for repl_async_load_event_handler
+    ctx.set_module_options(ModuleOptions::HANDLE_REPL_ASYNC_LOAD);
+    Status::Ok
+}
+
 //////////////////////////////////////////////////////
 
 valkey_module! {
@@ -248,6 +313,7 @@ valkey_module! {
     version: 2,
     allocator: (ValkeyAlloc, ValkeyAlloc),
     data_types: [],
+    init: init,
     commands: [
         ["num_flushed", num_flushed, "readonly", 0, 0, 0],
         ["num_max_memory_changes", num_maxmemory_changes, "readonly", 0, 0, 0],
@@ -260,5 +326,8 @@ valkey_module! {
         ["num_loading_progress_rdb", num_loading_progress_rdb, "readonly", 0, 0, 0],
         ["num_loading_progress_aof", num_loading_progress_aof, "readonly", 0, 0, 0],
         ["num_fork_child_events", num_fork_child_events, "readonly", 0, 0, 0],
+        ["num_replica_change_events", num_replica_change_events, "readonly", 0, 0, 0],
+        ["num_repl_async_load_events", num_repl_async_load_events, "readonly", 0, 0, 0],
+        ["num_swapdb_events", num_swapdb_events, "readonly", 0, 0, 0],
     ]
 }
