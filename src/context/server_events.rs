@@ -221,9 +221,8 @@ extern "C" fn loading_progress_event_callback(
     }
 
     // Cast to the generated raw binding for the loading progress struct
-    let info: &raw::RedisModuleLoadingProgressInfo = unsafe {
-        &*(data as *mut raw::RedisModuleLoadingProgressInfo)
-    };
+    let info: &raw::RedisModuleLoadingProgressInfo =
+        unsafe { &*(data as *mut raw::RedisModuleLoadingProgressInfo) };
 
     let hz = info.hz as i32;
     let progress = info.progress as i32;
@@ -241,9 +240,11 @@ extern "C" fn loading_progress_event_callback(
         progress,
     };
 
-    LOADING_PROGRESS_SERVER_EVENTS_LIST.iter().for_each(|callback| {
-        callback(&ctx, payload);
-    });
+    LOADING_PROGRESS_SERVER_EVENTS_LIST
+        .iter()
+        .for_each(|callback| {
+            callback(&ctx, payload);
+        });
 }
 
 extern "C" fn flush_event_callback(
@@ -505,7 +506,8 @@ pub fn register_server_events(ctx: &Context) -> Result<(), ValkeyError> {
     // we can confirm the example handlers were wired into the distributed slices.
     ctx.log_notice(&format!(
         "Server event handlers counts: loading={}, loading_progress={}",
-        LOADING_SERVER_EVENTS_LIST.len(), LOADING_PROGRESS_SERVER_EVENTS_LIST.len()
+        LOADING_SERVER_EVENTS_LIST.len(),
+        LOADING_PROGRESS_SERVER_EVENTS_LIST.len()
     ));
     register_single_server_event_type(
         ctx,
