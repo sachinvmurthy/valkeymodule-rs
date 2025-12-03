@@ -310,7 +310,7 @@ fn init(ctx: &Context, _args: &[ValkeyString]) -> Status {
 
 valkey_module! {
     name: "srv_events",
-    version: 2,
+    version: 1,
     allocator: (ValkeyAlloc, ValkeyAlloc),
     data_types: [],
     init: init,
